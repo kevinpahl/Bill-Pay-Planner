@@ -1,0 +1,643 @@
+{
+ "version": 2,
+ "incomes": [
+  {
+   "id": "i1",
+   "name": "Paycheck 1",
+   "amount": 2445.0,
+   "keep": 0.0,
+   "first_date": "2026-09-04",
+   "frequency": "biweekly"
+  },
+  {
+   "id": "i2",
+   "name": "Paycheck 2",
+   "amount": 1501.0,
+   "keep": 0.0,
+   "first_date": "2026-09-04",
+   "frequency": "biweekly"
+  }
+ ],
+ "bills": [
+  {
+   "id": "b1",
+   "name": "Church",
+   "day": 1,
+   "amount": 200.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b2",
+   "name": "Julian",
+   "day": 1,
+   "amount": 200.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b3",
+   "name": "Raymond",
+   "day": 1,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b4",
+   "name": "Cove",
+   "day": 1,
+   "amount": 17.99,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b5",
+   "name": "Mortgage",
+   "day": 1,
+   "amount": 3200.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b6",
+   "name": "Express",
+   "day": 1,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b7",
+   "name": "Holly CareCredit",
+   "day": 1,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b8",
+   "name": "YouTube TV",
+   "day": 2,
+   "amount": 88.59,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b9",
+   "name": "Starlink",
+   "day": 3,
+   "amount": 130.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b10",
+   "name": "Google",
+   "day": 4,
+   "amount": 12.8,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b11",
+   "name": "Misc.",
+   "day": 5,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b12",
+   "name": "Microsoft",
+   "day": 7,
+   "amount": 13.87,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b13",
+   "name": "Amazon",
+   "day": 8,
+   "amount": 16.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b14",
+   "name": "Pontoon",
+   "day": 15,
+   "amount": 369.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b15",
+   "name": "Farm Bureau Car",
+   "day": 15,
+   "amount": 211.93,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b16",
+   "name": "Church",
+   "day": 15,
+   "amount": 200.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b17",
+   "name": "Julian",
+   "day": 15,
+   "amount": 200.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b18",
+   "name": "Farm Bureau Boats",
+   "day": 20,
+   "amount": 25.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b19",
+   "name": "Crossroads School",
+   "day": 20,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b20",
+   "name": "Misc.",
+   "day": 20,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b21",
+   "name": "Farm Bureau Life",
+   "day": 21,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b22",
+   "name": "Kevin CareCredit",
+   "day": 21,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b23",
+   "name": "Duke Power",
+   "day": 22,
+   "amount": 300.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b24",
+   "name": "T-Mobile",
+   "day": 24,
+   "amount": 157.08,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b25",
+   "name": "NBA League Pass",
+   "day": 26,
+   "amount": 0.0,
+   "grace": 0,
+   "active": true
+  },
+  {
+   "id": "b26",
+   "name": "Hyundai",
+   "day": 28,
+   "amount": 340.0,
+   "grace": 0,
+   "active": true
+  }
+ ],
+ "settings": {
+  "months": 12,
+  "start_balance": 0.0,
+  "auto_balance": false,
+  "cushion": 0.0,
+  "holiday_shift": false,
+  "show_past": false
+ },
+ "sheet_plan": [
+  {
+   "date": "2026-09-04",
+   "formula": "=$H$10-SUM(C11:C18,C6)",
+   "bills": [
+    "b10",
+    "b11",
+    "b12",
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b5"
+   ]
+  },
+  {
+   "date": "2026-09-18",
+   "formula": "=$H$13-SUM(C19:C27)",
+   "bills": [
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2026-10-02",
+   "formula": "=$H$16-SUM(C2:C18)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17"
+   ]
+  },
+  {
+   "date": "2026-10-16",
+   "formula": "=$H$19-SUM(C19:C27)",
+   "bills": [
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2026-10-30",
+   "formula": "=$H$22-SUM(C2:C14)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13"
+   ]
+  },
+  {
+   "date": "2026-11-13",
+   "formula": "=$H$25-SUM(C15:C27)",
+   "bills": [
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2026-11-27",
+   "formula": "=$H$28-SUM(C2:C14)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13"
+   ]
+  },
+  {
+   "date": "2026-12-11",
+   "formula": "=$H$31-SUM(C15:C25)",
+   "bills": [
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24"
+   ]
+  },
+  {
+   "date": "2026-12-25",
+   "formula": "=$H$34-SUM(C26:C27,C2:C13)",
+   "bills": [
+    "b25",
+    "b26",
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12"
+   ]
+  },
+  {
+   "date": "2027-01-08",
+   "formula": "=$H$37-SUM(C14:C23)",
+   "bills": [
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22"
+   ]
+  },
+  {
+   "date": "2027-01-22",
+   "formula": "=$H$40-SUM(C24:C27,C2:C11)",
+   "bills": [
+    "b23",
+    "b24",
+    "b25",
+    "b26",
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10"
+   ]
+  },
+  {
+   "date": "2027-02-05",
+   "formula": "=$H$43-SUM(C12:C18)",
+   "bills": [
+    "b11",
+    "b12",
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17"
+   ]
+  },
+  {
+   "date": "2027-02-19",
+   "formula": "=$H$46-SUM(C19:C27,C2:C11)",
+   "bills": [
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26",
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10"
+   ]
+  },
+  {
+   "date": "2027-03-05",
+   "formula": "=$H$49-SUM(C12:C18)",
+   "bills": [
+    "b11",
+    "b12",
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17"
+   ]
+  },
+  {
+   "date": "2027-03-19",
+   "formula": "=$H$52-SUM(C19:C27,C2:C8)",
+   "bills": [
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26",
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7"
+   ]
+  },
+  {
+   "date": "2027-04-02",
+   "formula": "=$H$55-SUM(C9:C18)",
+   "bills": [
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13",
+    "b14",
+    "b15",
+    "b16",
+    "b17"
+   ]
+  },
+  {
+   "date": "2027-04-16",
+   "formula": "=$H$58-SUM(C19:C27)",
+   "bills": [
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2027-04-30",
+   "formula": "=$H$61-SUM(C2:C14)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13"
+   ]
+  },
+  {
+   "date": "2027-05-14",
+   "formula": "=$H$64-SUM(C15:C27)",
+   "bills": [
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2027-05-28",
+   "formula": "=$H$67-SUM(C2:C14)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13"
+   ]
+  },
+  {
+   "date": "2027-06-11",
+   "formula": "=$H$70-SUM(C15:C27)",
+   "bills": [
+    "b14",
+    "b15",
+    "b16",
+    "b17",
+    "b18",
+    "b19",
+    "b20",
+    "b21",
+    "b22",
+    "b23",
+    "b24",
+    "b25",
+    "b26"
+   ]
+  },
+  {
+   "date": "2027-06-25",
+   "formula": "=$H$73-SUM(C2:C14)",
+   "bills": [
+    "b1",
+    "b2",
+    "b3",
+    "b4",
+    "b5",
+    "b6",
+    "b7",
+    "b8",
+    "b9",
+    "b10",
+    "b11",
+    "b12",
+    "b13"
+   ]
+  }
+ ],
+ "overrides": {},
+ "amounts": {},
+ "paid": {
+  "b14|2026-11-15": true
+ }
+}
