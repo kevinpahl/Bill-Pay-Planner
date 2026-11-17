@@ -4,7 +4,9 @@ Run with:  streamlit run app.py
 """
 from __future__ import annotations
 
+import hmac
 import json
+import time
 import uuid
 from datetime import date, datetime
 
@@ -17,17 +19,68 @@ import engine
 
 st.set_page_config(page_title="Bill Pay Planner", page_icon="🗓️", layout="wide")
 
+# ---------------------------------------------------------------- password
+
+def secret(name: str):
+    try:
+        return st.secrets.get(name)
+    except Exception:  # noqa: BLE001 - no secrets file
+        return None
+
+
+def require_password() -> None:
+    """Stop the app until the right password is entered. Fails closed if no password is set."""
+    if st.session_state.get("authed"):
+        return
+    expected = secret("password")
+    st.title("Bill Pay Planner")
+    if not expected:
+        st.error("No password is set, so the planner is locked. Add a line like  password = \"your-password\"  "
+                 "to .streamlit/secrets.toml (on your computer) or to the app's Secrets (on Streamlit Cloud).")
+        st.stop()
+    with st.form("login"):
+        pw = st.text_input("Password", type="password")
+        ok = st.form_submit_button("Unlock")
+    if ok:
+        if hmac.compare_digest(pw.encode(), str(expected).encode()):
+            st.session_state.authed = True
+            st.session_state.fails = 0
+            st.rerun()
+        st.session_state.fails = st.session_state.get("fails", 0) + 1
+        time.sleep(min(10, st.session_state.fails))  # slows down guessing
+        st.error("That password isn't right.")
+    st.stop()
+
+
+require_password()
+
 # ---------------------------------------------------------------- state
 
+if "storage" not in st.session_state:
+    st.session_state.storage = data.make_storage(st.secrets if secret("github") else None)
+storage = st.session_state.storage
+
 if "state" not in st.session_state:
-    st.session_state.state = data.load_state()
+    try:
+        st.session_state.state = data.load_state(storage)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Couldn't load your saved data from {storage.label}: {e}")
+        st.stop()
 if "rev" not in st.session_state:
     st.session_state.rev = 0  # bumped after each edit so editors start fresh from saved data
 state: dict = st.session_state.state
 
 
+def persist() -> None:
+    try:
+        data.save_state(storage, st.session_state.state)
+        st.session_state.pop("save_error", None)
+    except Exception as e:  # noqa: BLE001
+        st.session_state.save_error = str(e)
+
+
 def commit() -> None:
-    data.save_state(state)
+    persist()
     st.session_state.rev += 1
 
 
@@ -35,7 +88,7 @@ def replace_state(new_state: dict) -> None:
     st.session_state.state = data.normalize(new_state)
     for k in [k for k in st.session_state if str(k).startswith("set_")]:
         del st.session_state[k]
-    data.save_state(st.session_state.state)
+    persist()
     st.session_state.rev += 1
 
 
@@ -115,6 +168,12 @@ with st.sidebar:
             st.error(f"Couldn't read that workbook: {e}")
 
     st.divider()
+    st.caption(f"Changes save automatically to {storage.label}.")
+    if st.button("Log out", use_container_width=True):
+        st.session_state.authed = False
+        st.rerun()
+
+    st.divider()
     st.subheader("Backup")
     st.download_button("Download backup (.json)", json.dumps(state, indent=1), file_name="bill_planner_backup.json",
                        mime="application/json", use_container_width=True)
@@ -143,6 +202,9 @@ plan_index = {p.date: i for i, p in enumerate(plan)}
 
 st.title("Bill Pay Planner")
 st.caption("Which paycheck pays which bill, and what's left over, every payday ahead.")
+if st.session_state.get("save_error"):
+    st.error(f"Your last change wasn't saved to {storage.label}: {st.session_state.save_error}. "
+             "Download a backup from the sidebar to be safe.")
 
 if not shown:
     st.info("Add a paycheck on the Paychecks tab to see a schedule.")

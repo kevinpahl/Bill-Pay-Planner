@@ -50,19 +50,120 @@ def normalize(s: dict) -> dict:
     return s
 
 
-def load_state() -> dict:
-    if DATA_FILE.exists():
-        try:
-            return normalize(json.loads(DATA_FILE.read_text()))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return default_state()
+class LocalStorage:
+    """Saves to planner_data.json next to the app. Good for running on your own computer."""
+    label = "this computer"
+
+    def load(self) -> dict | None:
+        if DATA_FILE.exists():
+            try:
+                return json.loads(DATA_FILE.read_text())
+            except (json.JSONDecodeError, OSError):
+                return None
+        return None
+
+    def save(self, state: dict) -> None:
+        tmp = DATA_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=1))
+        tmp.replace(DATA_FILE)
 
 
-def save_state(state: dict) -> None:
-    tmp = DATA_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=1))
-    tmp.replace(DATA_FILE)
+class GitHubStorage:
+    """Saves to a JSON file on a separate branch of your private GitHub repo.
+
+    Streamlit Community Cloud erases files the app writes whenever it restarts, so on the cloud
+    the data lives in GitHub instead. A separate branch keeps these saves from redeploying the app.
+    """
+    label = "GitHub"
+    API = "https://api.github.com"
+
+    def __init__(self, token: str, repo: str, branch: str = "planner-data", path: str = "planner_data.json"):
+        import requests  # installed with Streamlit
+
+        self.requests = requests
+        self.repo, self.branch, self.path = repo, branch, path
+        self.headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": "2022-11-28"}
+        self.sha: str | None = None
+
+    def _url(self) -> str:
+        return f"{self.API}/repos/{self.repo}/contents/{self.path}"
+
+    def _check(self, r, action: str) -> None:
+        if r.status_code >= 400:
+            raise RuntimeError(f"GitHub {action} failed ({r.status_code}): {r.text[:200]}")
+
+    def load(self) -> dict | None:
+        import base64
+
+        r = self.requests.get(self._url(), headers=self.headers, params={"ref": self.branch}, timeout=15)
+        if r.status_code == 404:
+            return None  # no saved data yet, or the branch doesn't exist yet
+        self._check(r, "load")
+        body = r.json()
+        self.sha = body["sha"]
+        return json.loads(base64.b64decode(body["content"]))
+
+    def _ensure_branch(self) -> None:
+        r = self.requests.get(f"{self.API}/repos/{self.repo}/git/ref/heads/{self.branch}", headers=self.headers, timeout=15)
+        if r.status_code == 200:
+            return
+        repo = self.requests.get(f"{self.API}/repos/{self.repo}", headers=self.headers, timeout=15)
+        self._check(repo, "repo lookup")
+        default = repo.json()["default_branch"]
+        ref = self.requests.get(f"{self.API}/repos/{self.repo}/git/ref/heads/{default}", headers=self.headers, timeout=15)
+        self._check(ref, "branch lookup")
+        made = self.requests.post(f"{self.API}/repos/{self.repo}/git/refs", headers=self.headers, timeout=15,
+                                  json={"ref": f"refs/heads/{self.branch}", "sha": ref.json()["object"]["sha"]})
+        if made.status_code != 422:  # 422 = someone else just created it
+            self._check(made, "branch create")
+
+    def save(self, state: dict) -> None:
+        import base64
+
+        content = base64.b64encode(json.dumps(state, indent=1).encode()).decode()
+        for attempt in range(2):
+            body = {"message": "Update bill planner data", "content": content, "branch": self.branch}
+            if self.sha:
+                body["sha"] = self.sha
+            r = self.requests.put(self._url(), headers=self.headers, json=body, timeout=15)
+            if r.status_code in (404, 422) and attempt == 0:
+                # branch missing, or our copy is out of date: fix and try once more
+                self._ensure_branch()
+                self.sha = None
+                existing = self.requests.get(self._url(), headers=self.headers, params={"ref": self.branch}, timeout=15)
+                if existing.status_code == 200:
+                    self.sha = existing.json()["sha"]
+                continue
+            if r.status_code == 409 and attempt == 0:
+                self.sha = None
+                existing = self.requests.get(self._url(), headers=self.headers, params={"ref": self.branch}, timeout=15)
+                if existing.status_code == 200:
+                    self.sha = existing.json()["sha"]
+                continue
+            self._check(r, "save")
+            self.sha = r.json()["content"]["sha"]
+            return
+
+
+def make_storage(secrets) -> LocalStorage | GitHubStorage:
+    """Use GitHub when a [github] section is in secrets, otherwise the local file."""
+    try:
+        gh = secrets.get("github") if secrets is not None else None
+    except Exception:  # noqa: BLE001 - no secrets file at all
+        gh = None
+    if gh and gh.get("token") and gh.get("repo"):
+        return GitHubStorage(gh["token"], gh["repo"], gh.get("branch", "planner-data"), gh.get("path", "planner_data.json"))
+    return LocalStorage()
+
+
+def load_state(storage) -> dict:
+    loaded = storage.load()
+    return normalize(loaded) if loaded else default_state()
+
+
+def save_state(storage, state: dict) -> None:
+    storage.save(state)
 
 
 def import_workbook(file) -> dict:
