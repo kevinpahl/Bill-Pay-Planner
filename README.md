@@ -2,6 +2,10 @@
 
 Shows which paycheck pays which bill, what's left over from each check, and a running total, projected forward from your Finances.xlsx. The app is locked behind a password.
 
+Which paycheck pays which bill comes from your spreadsheet's summary formulas (C29:C50): through Jun 25, 2027 each paycheck pays exactly the bill rows its formula sums, and after that the same pattern continues (each check picks up at the next bill row and pays everything due before the next payday).
+
+On the Pay schedule you can tick **Paid** and type a new **Amount** for any payment; both save immediately (a green "Saved" note pops up). Change a bill's amount on the **Bills** tab to change it for every month.
+
 ## Option A: run it on your own computer
 
 1. Install Python 3.10 or newer, then in this folder run:
