@@ -1,9 +1,12 @@
 """Scheduling engine for the Bill Pay Planner.
 
-Pure functions, no Streamlit. Decides which paycheck pays each bill:
-each bill is paid from the latest paycheck that lands on or before its due date,
-unless the bill was moved by hand, allowed to be paid late ("late OK" days),
-or auto-balance pays it early to keep a paycheck from going negative.
+Pure functions, no Streamlit. Decides which paycheck pays each bill, in this order:
+1. A bill you moved by hand goes to the paycheck you picked.
+2. For paydays your spreadsheet covers (the C29:C50 formulas), each paycheck pays exactly
+   the bill rows its formula sums, e.g. =$H$34-SUM(C26:C27,C2:C13).
+3. After that, the same pattern continues: each paycheck picks up at the next bill row and
+   pays every bill due before the next payday (so nothing is paid late).
+Optional extras: "late OK" days per bill, and auto-balance (pay early to keep a check positive).
 """
 from __future__ import annotations
 
@@ -114,12 +117,15 @@ class BillPayment:
     name: str
     amount: float
     due: date
-    how: str | None = None   # None, "manual", "auto", "grace"
+    how: str | None = None   # None (continued pattern), "sheet", "manual", "auto", "grace"
+    default_amount: float = 0.0  # the bill's usual amount; amount differs when edited for this payment
+    row: int = 0                 # the bill's row number in the spreadsheet layout (row 2 = first bill)
 
 
 @dataclass
 class Paycheck:
     date: date
+    sched: date | None = None    # the regular payday before any holiday/weekend shift
     incomes: list[dict] = field(default_factory=list)
     moved_from: list[tuple[date, str]] = field(default_factory=list)
     bills: list[BillPayment] = field(default_factory=list)
@@ -140,7 +146,8 @@ def build_plan(state: dict, end: date) -> list[Paycheck]:
             continue
         for sched in schedule_dates(inc, end + timedelta(days=45)):
             dep, reason = deposit_date(sched, bool(s.get("holiday_shift", True)))
-            p = by_date.setdefault(dep, Paycheck(date=dep))
+            p = by_date.setdefault(dep, Paycheck(date=dep, sched=sched))
+            p.sched = min(p.sched or sched, sched)
             p.incomes.append({"name": inc["name"], "amount": float(inc["amount"] or 0),
                               "keep": float(inc.get("keep") or 0)})
             if reason:
@@ -155,6 +162,35 @@ def build_plan(state: dict, end: date) -> list[Paycheck]:
 
     # 2. each bill occurrence -> a paycheck
     overrides: dict = state.get("overrides", {})
+    amounts: dict = state.get("amounts", {})
+    bills_by_id = {b["id"]: b for b in state["bills"] if b.get("active") is not False}
+    row_of = {b["id"]: i + 2 for i, b in enumerate(state["bills"])}
+
+    def occurrence(b: dict, on_or_after: date) -> date:
+        y, m = on_or_after.year, on_or_after.month
+        for _ in range(3):
+            d = date(y, m, max(1, min(int(b.get("day") or 1), calendar.monthrange(y, m)[1])))
+            if d >= on_or_after:
+                return d
+            y, m = add_months(y, m, 1)
+        return d
+
+    # 2a. paydays your sheet covers: the exact rows in each summary formula
+    sheet_assigned: dict[str, int] = {}
+    by_sched = {p.sched: i for i, p in enumerate(plan)}
+    for entry in state.get("sheet_plan", []):
+        i = by_sched.get(date.fromisoformat(entry["date"]))
+        if i is None:
+            continue
+        for bid in entry["bills"]:
+            b = bills_by_id.get(bid)
+            if not b:
+                continue
+            # the formula's row means the next time that bill comes due (allowing a few days late)
+            due = occurrence(b, plan[i].sched - timedelta(days=7))
+            sheet_assigned.setdefault(f"{bid}|{due.isoformat()}", i)
+
+    # 2b. every bill, every month
     y, m = plan[0].date.year, plan[0].date.month
     last = plan[-1].date
     while date(y, m, 1) <= last:
@@ -169,6 +205,8 @@ def build_plan(state: dict, end: date) -> list[Paycheck]:
             ov = overrides.get(key)
             if ov and date.fromisoformat(ov) in index_of:
                 idx, how = index_of[date.fromisoformat(ov)], "manual"
+            elif key in sheet_assigned:
+                idx, how = sheet_assigned[key], "sheet"
             else:
                 for i in range(len(plan) - 1, -1, -1):
                     if plan[i].date <= due:
@@ -182,7 +220,9 @@ def build_plan(state: dict, end: date) -> list[Paycheck]:
                             break
             if idx < 0:
                 continue  # due before the first paycheck on record
-            plan[idx].bills.append(BillPayment(key, b["id"], b["name"], float(b.get("amount") or 0), due, how))
+            default = float(b.get("amount") or 0)
+            amt = float(amounts[key]) if key in amounts else default
+            plan[idx].bills.append(BillPayment(key, b["id"], b["name"], amt, due, how, default, row_of[b["id"]]))
         y, m = add_months(y, m, 1)
 
     def recompute(p: Paycheck) -> None:
@@ -212,7 +252,7 @@ def build_plan(state: dict, end: date) -> list[Paycheck]:
                 recompute(prev)
 
     for p in plan:
-        p.bills.sort(key=lambda x: (x.due, x.name))
+        p.bills.sort(key=lambda x: (x.due, x.row))
         recompute(p)
     return plan
 
@@ -232,3 +272,19 @@ def visible_plan(state: dict, today: date) -> tuple[list[Paycheck], list[Paychec
         run += p.left
         p.running = run
     return plan, shown, (plan[cur_idx].date if cur_idx >= 0 else None)
+
+
+def excel_formula(p: Paycheck) -> str:
+    """The paycheck written the way the spreadsheet's summary formulas are, e.g. =Net-SUM(C26:C27,C2:C13)."""
+    rows = [b.row for b in sorted(p.bills, key=lambda b: (b.due, b.row))]
+    if not rows:
+        return "=Net"
+    parts, start, prev = [], rows[0], rows[0]
+    for r in rows[1:] + [None]:
+        if r is not None and r == prev + 1:
+            prev = r
+            continue
+        parts.append(f"C{start}" if start == prev else f"C{start}:C{prev}")
+        if r is not None:
+            start = prev = r
+    return "=Net-SUM(" + ",".join(parts) + ")"

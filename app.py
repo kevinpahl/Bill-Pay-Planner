@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 from datetime import date, datetime
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -56,6 +57,9 @@ require_password()
 
 # ---------------------------------------------------------------- state
 
+# Community Cloud runs apps from /mount/src/<repo>
+ON_STREAMLIT_CLOUD = Path(__file__).resolve().as_posix().startswith("/mount/src/")
+
 if "storage" not in st.session_state:
     st.session_state.storage = data.make_storage(st.secrets if secret("github") else None)
 storage = st.session_state.storage
@@ -75,6 +79,7 @@ def persist() -> None:
     try:
         data.save_state(storage, st.session_state.state)
         st.session_state.pop("save_error", None)
+        st.session_state.just_saved = True
     except Exception as e:  # noqa: BLE001
         st.session_state.save_error = str(e)
 
@@ -205,6 +210,12 @@ st.caption("Which paycheck pays which bill, and what's left over, every payday a
 if st.session_state.get("save_error"):
     st.error(f"Your last change wasn't saved to {storage.label}: {st.session_state.save_error}. "
              "Download a backup from the sidebar to be safe.")
+elif st.session_state.pop("just_saved", False):
+    st.toast(f"Saved to {storage.label}", icon="✅")
+if ON_STREAMLIT_CLOUD and isinstance(storage, data.LocalStorage):
+    st.error("Changes are NOT being kept: this app is running on Streamlit Cloud without the [github] section in "
+             "its Secrets, so Streamlit erases saved changes whenever the app restarts. Add the [github] lines "
+             "(see README.md) under Settings > Secrets.")
 
 if not shown:
     st.info("Add a paycheck on the Paychecks tab to see a schedule.")
@@ -261,9 +272,11 @@ tab_sched, tab_bills, tab_pay, tab_how = st.tabs(["Pay schedule", "Bills", "Payc
 AUTOMATIC = "Automatic"
 pay_labels = {long_date(p.date): p.date for p in plan}
 pay_options = [AUTOMATIC] + list(pay_labels)
+open_periods: set = st.session_state.setdefault("open_periods", set())
 
 
-def apply_schedule_edits(ekey: str, bills: list[engine.BillPayment]) -> None:
+def apply_schedule_edits(ekey: str, bills: list[engine.BillPayment], period: date) -> None:
+    """Runs as soon as a cell in a paycheck's table changes; saves right away."""
     edits = st.session_state[ekey].get("edited_rows", {})
     for idx, change in edits.items():
         b = bills[int(idx)]
@@ -272,18 +285,38 @@ def apply_schedule_edits(ekey: str, bills: list[engine.BillPayment]) -> None:
                 state["paid"][b.key] = True
             else:
                 state["paid"].pop(b.key, None)
+        if "Amount" in change:
+            amt = change["Amount"]
+            if amt is None or abs(float(amt) - b.default_amount) < 0.005:
+                state["amounts"].pop(b.key, None)          # back to the bill's usual amount
+            else:
+                state["amounts"][b.key] = round(float(amt), 2)
         if "Pay from" in change:
             choice = change["Pay from"]
             if choice in (None, AUTOMATIC):
                 state["overrides"].pop(b.key, None)
             elif choice in pay_labels:
                 state["overrides"][b.key] = pay_labels[choice].isoformat()
+                open_periods.add(pay_labels[choice])
+    open_periods.add(period)  # keep this paycheck open after the page refreshes
     commit()
 
 
+def note(b: engine.BillPayment) -> str:
+    if abs(b.amount - b.default_amount) >= 0.005:
+        return f"changed (usually {money(b.default_amount)})"
+    if b.amount == 0:
+        return "$0: type the amount"
+    return ""
+
+
 with tab_sched:
-    st.caption("Each bill is paid from the latest paycheck on or before its due date. Tick **Paid** as you pay bills. "
-               "To pay a bill from a different paycheck, change **Pay from** (choose Automatic to undo).")
+    st.caption("Through Jun 25, 2027 each paycheck pays exactly the bills in your spreadsheet's C29:C50 formula. "
+               "After that the same pattern continues: each check picks up at the next bill row and pays everything "
+               "due before the next payday. **Tick Paid** and **type a new Amount** right in the table. Both save "
+               "immediately, and an amount you change here applies to that one payment only. To change a bill for "
+               "every month, use the Bills tab. To pay a bill from a different paycheck, change **Pay from** "
+               "(Automatic undoes it).")
     upcoming = [p.date for p in shown if p.date >= today][:1]
     for p in shown:
         paid_n = sum(1 for b in p.bills if state["paid"].get(b.key))
@@ -291,30 +324,36 @@ with tab_sched:
         tag = " · **This paycheck**" if p.date == cur_day else ""
         label = (f"**{long_date(p.date)}**{tag} · Bills {money(p.bills_total)} · {left} · "
                  f"Running {money(p.running)} · {paid_n}/{len(p.bills)} paid")
-        with st.expander(label, expanded=(p.date == cur_day or p.date in upcoming)):
+        with st.expander(label, expanded=(p.date == cur_day or p.date in upcoming or p.date in open_periods)):
             incomes = " + ".join(f"{i['name']} {money(i['amount'])}" for i in p.incomes)
             if p.keep:
                 incomes += f" − {money(p.keep)} set aside"
-            st.caption(incomes)
+            from_sheet = any(b.how == "sheet" for b in p.bills)
+            st.caption(f"{incomes}  ·  Excel: `{engine.excel_formula(p)}`"
+                       + ("  (from your sheet)" if from_sheet else "  (pattern continued)"))
             for orig, reason in p.moved_from:
                 st.info(f"Deposit moved earlier: {orig:%b} {orig.day} is {reason}.")
             if p.bills:
                 df = pd.DataFrame({
                     "Paid": [bool(state["paid"].get(b.key)) for b in p.bills],
-                    "Bill": [b.name + ("  ($0, set amount on Bills tab)" if b.amount == 0 else "") for b in p.bills],
+                    "Bill": [b.name for b in p.bills],
+                    "Row": [b.row for b in p.bills],
                     "Due": [short_date(b.due) for b in p.bills],
                     "Timing": [timing(b, p.date) for b in p.bills],
                     "Amount": [b.amount for b in p.bills],
+                    "Note": [note(b) for b in p.bills],
                     "Pay from": [long_date(p.date) if b.how == "manual" else AUTOMATIC for b in p.bills],
                 })
                 ekey = f"sched_{p.date.isoformat()}_{st.session_state.rev}"
                 st.data_editor(
                     df, key=ekey, hide_index=True, use_container_width=True,
-                    disabled=["Bill", "Due", "Timing", "Amount"],
-                    on_change=apply_schedule_edits, args=(ekey, p.bills),
+                    disabled=["Bill", "Row", "Due", "Timing", "Note"],
+                    on_change=apply_schedule_edits, args=(ekey, p.bills, p.date),
                     column_config={
                         "Paid": st.column_config.CheckboxColumn(width="small"),
-                        "Amount": st.column_config.NumberColumn(format="$%.2f"),
+                        "Row": st.column_config.NumberColumn(width="small", help="The bill's row in your spreadsheet"),
+                        "Amount": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="$%.2f",
+                                                                help="Change this payment only"),
                         "Pay from": st.column_config.SelectboxColumn(options=pay_options, required=True, width="medium"),
                     },
                 )
@@ -329,8 +368,11 @@ with tab_sched:
 # ---------------------------------------------------------------- bills editor
 
 with tab_bills:
-    st.caption("Edit names, due days and amounts; add rows at the bottom or select rows and delete them. "
-               "**Late OK** lets a bill wait for the first paycheck after its due date, up to that many days.")
+    st.caption("Edit names, due days and amounts here to change a bill for **every month** (payments where you typed "
+               "a one-time amount on the Pay schedule keep that amount). Changes save as soon as you leave the cell. "
+               "Add rows at the bottom, or select rows and delete them. Keep the bills in due-day order so the "
+               "row numbers match your spreadsheet. **Late OK** lets a bill wait for the first paycheck after its "
+               "due date, up to that many days.")
     bills_df = pd.DataFrame([{
         "id": b["id"], "Bill": b["name"], "Due day": int(b["day"]), "Amount": float(b["amount"]),
         "Late OK (days)": int(b.get("grace") or 0), "Include": b.get("active", True) is not False,
@@ -418,34 +460,37 @@ with tab_pay:
 
 with tab_how:
     st.markdown("""
-### The rule your spreadsheet follows
-Your sheet lists each bill with the day of the month it's due, and you're paid every other Friday starting Sep 4, 2026.
-In the summary block, each payday's "left over" is that day's net pay minus a **hand-picked range** of bill rows,
-for example `=$H$22-SUM(C2:C14)` on Oct 30.
+### How this app decides which paycheck pays which bill
+**Through Jun 25, 2027 it uses your spreadsheet's own formulas.** Each payday in C29:C50 subtracts a block of bill
+rows, for example `=$H$34-SUM(C26:C27,C2:C13)` on Dec 25. The app pays exactly those rows from that paycheck,
+so every number matches your sheet. (The one difference is Sep 4: the sheet used $1,505 for the second paycheck
+that day and $1,501 after, and the app uses $1,501, so Sep 4 shows $4 less.)
 
-Lining each range up against the due days shows one consistent rule: **each paycheck pays every bill due from that
-payday up to the day before the next payday.** A bill is paid from the most recent paycheck before it's due. From
-Oct 16, 2026 through Jun 25, 2027 that rule reproduces every number in your sheet, apart from the hand-made moves below.
+**After Jun 25, 2027 the same pattern continues.** Your formulas work through the bill list in order: each
+paycheck starts at the row after the last one the previous check paid, and wraps from row 27 back to row 2 at
+the end of the month. Where your sheet ends, the app keeps going: each check picks up at the next row and pays
+every bill due before the following payday, so nothing is paid late. Each paycheck shows its formula in the
+same Excel form (`Excel: =Net-SUM(...)`), so you can compare it with your sheet.
 
 ### Why the totals swing so much
-Paydays are every 14 days but bills are monthly. The paycheck just before the 1st carries the mortgage and the other
-early-month bills (about $3,880 through the 8th), leaving about $67, or less than zero. The other check in the month
-carries the 15th–28th bills and keeps $2,100–$3,100. The negative checks in your sheet (Dec 25, Jan 22, Feb 19,
-Mar 19) are covered by the surplus from the check before them, which is why this app shows a running total.
+Paydays are every 14 days but bills are monthly. The check that covers the 1st carries the mortgage and the
+other early-month bills (about $3,880 through the 8th), leaving about $67, or less than zero. The other check
+carries the 15th–28th bills and keeps $2,100–$3,100. A negative check is covered by the surplus from the check
+before it, which is why the app shows a running total.
 
-### Places where you broke the rule on purpose
-- **Hyundai (due the 28th)** was moved to the earlier check in Nov 2026, May 2027 and Jun 2027 (plus NBA League Pass
-  in June), because the next check also carried the mortgage and would have gone negative. You didn't do this in
-  Dec–Mar. The app keeps your three moves; the sidebar's "Pay bills early" setting does it everywhere automatically.
-- **Mortgage on Sep 4**: the first check pays September's mortgage 3 days late (the sheet starts after Sep 1).
-- **Oct 1 bills on Oct 2**: Church, Julian, Cove and the mortgage were pushed one day late onto the Oct 2 check
-  rather than the Sep 18 check, which would have dropped to about −$494. To copy this, set "Late OK" on those bills.
+### What your formulas do that a plain "pay before it's due" rule wouldn't
+- **Sep 4** pays September's mortgage (due Sep 1) 3 days late, because the sheet starts after Sep 1.
+- **Oct 2** pays the Oct 1 bills (Church, Julian, Cove, Mortgage) one day late instead of from Sep 18.
+- **Nov 13, May 14 and Jun 11** pay Hyundai (and NBA in June) early, so the next check, which also carries
+  the mortgage, doesn't go negative. Dec, Jan, Feb and Mar don't do this, so those checks go negative.
+
+To change any of this, use **Pay from** on a bill in the Pay schedule. Updating the spreadsheet and importing it
+from the sidebar also works: the app reads the new formulas.
 
 ### Things worth fixing in the sheet
-- The second paycheck is $1,505 on Sep 4 but $1,501 every check after. The app uses $1,501.
-- The summary stops at Jun 25, 2027 even though paydays run to Aug 20, 2027; each row needed a hand-typed range.
-- Ten bills are $0 (Raymond, Express, both CareCredit accounts, Crossroads School, both Misc., Farm Bureau Life,
-  NBA League Pass). If any are real, the leftovers are overstated.
-- The Dec 25, 2026 payday is Christmas, so the deposit will probably land Dec 24. The app moves it automatically.
+- Ten bills are $0 (Raymond, Express, both CareCredit accounts, Crossroads School, both Misc., Farm Bureau
+  Life, NBA League Pass). If any are real, the leftovers are too high. Type the amounts in the app.
+- The summary stops at Jun 25, 2027 even though paydays run to Aug 20, 2027. The app continues it.
 - The "Order" tab is left over from a debt-payoff template and shows only #REF! errors.
 """)
+
