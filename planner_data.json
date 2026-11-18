@@ -164,7 +164,7 @@
    "name": "Farm Bureau Life",
    "day": 21,
    "amount": 0.0,
-   "active": true
+   "active": false
   },
   {
    "id": "b22",
