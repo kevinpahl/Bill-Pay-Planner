@@ -209,7 +209,5 @@
   "show_past": false
  },
  "amounts": {},
- "paid": {
-  "b18|2026-11-20": true
- }
+ "paid": {}
 }
