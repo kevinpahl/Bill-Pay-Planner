@@ -157,7 +157,7 @@
    "name": "Misc.",
    "day": 20,
    "amount": 0.0,
-   "active": true
+   "active": false
   },
   {
    "id": "b21",
