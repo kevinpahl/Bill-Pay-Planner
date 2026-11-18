@@ -203,7 +203,7 @@
   }
  ],
  "settings": {
-  "months": 12,
+  "months": 13,
   "start_balance": 0.0,
   "holiday_shift": false,
   "show_past": false
