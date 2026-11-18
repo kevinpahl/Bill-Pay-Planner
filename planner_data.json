@@ -118,34 +118,6 @@
    "active": true
   },
   {
-   "id": "b19",
-   "name": "Crossroads School",
-   "day": 20,
-   "amount": 0.0,
-   "active": false
-  },
-  {
-   "id": "b20",
-   "name": "Misc.",
-   "day": 20,
-   "amount": 0.0,
-   "active": false
-  },
-  {
-   "id": "b21",
-   "name": "Farm Bureau Life",
-   "day": 21,
-   "amount": 0.0,
-   "active": false
-  },
-  {
-   "id": "b22",
-   "name": "Kevin CareCredit",
-   "day": 21,
-   "amount": 0.0,
-   "active": false
-  },
-  {
    "id": "b23",
    "name": "Duke Power",
    "day": 22,
@@ -158,13 +130,6 @@
    "day": 24,
    "amount": 157.08,
    "active": true
-  },
-  {
-   "id": "b25",
-   "name": "NBA League Pass",
-   "day": 26,
-   "amount": 0.0,
-   "active": false
   },
   {
    "id": "b26",
