@@ -94,7 +94,7 @@
    "name": "Misc.",
    "day": 5,
    "amount": 0.0,
-   "active": true
+   "active": false
   },
   {
    "id": "b12",
