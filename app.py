@@ -8,7 +8,7 @@ import hmac
 import json
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import altair as alt
@@ -112,16 +112,13 @@ def short_date(d: date) -> str:
     return f"{d:%a, %b} {d.day}"
 
 
-def timing(b: engine.BillPayment, pay_day: date) -> str:
-    diff = (b.due - pay_day).days
-    if diff > 0:
-        text = f"{diff} day{'s' if diff != 1 else ''} early"
-    elif diff == 0:
-        text = "on due date"
-    else:
-        text = f"{-diff} day{'s' if diff != -1 else ''} LATE"
-    extra = {"manual": " · moved by you", "auto": " · paid early (auto)", "grace": " · late OK"}.get(b.how or "", "")
-    return text + extra
+def md(d: date) -> str:
+    return f"{d:%b} {d.day}"
+
+
+def days_after(b: engine.BillPayment, pay_day: date) -> str:
+    n = (b.due - pay_day).days
+    return "on payday" if n == 0 else f"{n} day{'s' if n != 1 else ''} after payday"
 
 
 # ---------------------------------------------------------------- sidebar
@@ -143,27 +140,23 @@ with st.sidebar:
         return widget(label, value=value, key=wkey, on_change=cb, **kw)
 
     setting("months", st.number_input, "Months to show ahead", min_value=1, max_value=36, step=1)
-    setting("start_balance", st.number_input, "Cash on hand at the start", step=100.0, format="%.2f",
-            help="Money in the account just before the first paycheck shown. Running totals start here.")
+    setting("start_balance", st.number_input, "Money already in the account", step=100.0, format="%.2f",
+            help="What's in the account just before the first paycheck shown. It's carried into that check.")
     setting("show_past", st.toggle, "Show past paychecks")
     setting("holiday_shift", st.toggle, "Move paydays off weekends and bank holidays",
             help="Direct deposit lands the business day before.")
-    setting("auto_balance", st.toggle, "Pay bills early when a check can't cover its own bills",
-            help="Moves bills to the paycheck before, earliest-due first, when that check has room.")
-    setting("cushion", st.number_input, "Keep at least this much from each check", min_value=0.0, step=50.0,
-            format="%.2f", help="Used with the setting above.")
 
     st.divider()
     st.subheader("Update from Excel")
     st.caption("Upload your updated Finances.xlsx to replace bills and paychecks. "
-               "Paid ticks and moves are kept for bills that keep the same row and name.")
+               "Paid ticks and changed amounts are kept for bills that keep the same row and name.")
     up = st.file_uploader("Finances workbook", type=["xlsx"], label_visibility="collapsed")
     if up is not None and st.button("Import workbook", use_container_width=True):
         try:
             new = data.import_workbook(up)
             old_names = {b["id"]: b["name"] for b in state["bills"]}
             same = {b["id"] for b in new["bills"] if old_names.get(b["id"]) == b["name"]}
-            new["overrides"] = {k: v for k, v in state["overrides"].items() if k.split("|")[0] in same}
+            new["amounts"] = {k: v for k, v in state["amounts"].items() if k.split("|")[0] in same}
             new["paid"] = {k: v for k, v in state["paid"].items() if k.split("|")[0] in same}
             new["settings"] = state["settings"]
             replace_state(new)
@@ -203,10 +196,10 @@ state = st.session_state.state
 
 today = date.today()
 plan, shown, cur_day = engine.visible_plan(state, today)
-plan_index = {p.date: i for i, p in enumerate(plan)}
+next_of = {p.date: (plan[i + 1] if i + 1 < len(plan) else None) for i, p in enumerate(plan)}
 
 st.title("Bill Pay Planner")
-st.caption("Which paycheck pays which bill, and what's left over, every payday ahead.")
+st.caption("Each paycheck pays only the bills due before the next payday. Whatever is left carries over to the next check.")
 if st.session_state.get("save_error"):
     st.error(f"Your last change wasn't saved to {storage.label}: {st.session_state.save_error}. "
              "Download a backup from the sidebar to be safe.")
@@ -220,58 +213,51 @@ if ON_STREAMLIT_CLOUD and isinstance(storage, data.LocalStorage):
 if not shown:
     st.info("Add a paycheck on the Paychecks tab to see a schedule.")
 else:
-    nxt = next((p for p in shown if p.date >= today), shown[-1])
-    future = [p for p in shown if cur_day is None or p.date >= cur_day]
+    cur = next((p for p in shown if p.date == cur_day), shown[0])
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Next paycheck", short_date(nxt.date), f"{money(nxt.income - nxt.keep)} net", delta_color="off")
-    c2.metric("Bills from it", money(nxt.bills_total),
-              f"{sum(1 for b in nxt.bills if b.amount > 0)} bills", delta_color="off")
-    c3.metric("Left over from it", money(nxt.left), f"Running total {money(nxt.running)}", delta_color="off")
-    if len(future) > 1:
-        days = (future[-1].date - future[0].date).days + 14
-        avg = sum(p.left for p in future) / (days / 30.44)
-        low = min(future, key=lambda p: p.running)
-        c4.metric("Average left over per month", money(avg, cents=False),
-                  f"Lowest running total {money(low.running, False)} on {low.date:%b} {low.date.day}", delta_color="off")
+    c1.metric("Current paycheck", short_date(cur.date), f"pays bills due {md(cur.date)} – {md(cur.window_end)}",
+              delta_color="off")
+    c2.metric("Bills due before the next check", money(cur.bills_total),
+              f"{sum(1 for b in cur.bills if not state['paid'].get(b.key))} still to pay", delta_color="off")
+    c3.metric("Carried to the next check", money(cur.carried_out),
+              f"next check {short_date(cur.next_date)}" if cur.next_date else None, delta_color="off")
+    low = min(shown, key=lambda p: p.carried_out)
+    c4.metric("Lowest point ahead", money(low.carried_out, cents=False), f"after the {md(low.date)} check",
+              delta_color="off")
+    if low.carried_out < 0:
+        st.warning(f"After the {md(low.date)} check the money runs out by {money(-low.carried_out)}. "
+                   "Enter what's already in the account in the sidebar, or lower some bills.")
 
-    if any(p.running < 0 for p in future):
-        st.warning("The running total goes below zero. Add your starting cash in the sidebar, or move bills.")
-    negs = sum(1 for p in future if p.left < 0)
-
-    # chart
     chart_df = pd.DataFrame({
-        "Payday": [p.date.isoformat() for p in shown],
+        "Payday": [long_date(p.date) for p in shown],
         "Label": [f"{p.date:%b} {p.date.day} '{p.date:%y}" for p in shown],
-        "Left over": [round(p.left, 2) for p in shown],
-        "Running total": [round(p.running, 2) for p in shown],
+        "Pays bills due": [f"{md(p.date)} – {md(p.window_end)}" for p in shown],
         "Bills": [round(p.bills_total, 2) for p in shown],
-        "Status": ["Short" if p.left < 0 else "Covered" for p in shown],
+        "This check's leftover": [round(p.left, 2) for p in shown],
+        "Carried to next check": [round(p.carried_out, 2) for p in shown],
+        "Status": ["Short" if p.carried_out < 0 else "OK" for p in shown],
     })
-    st.subheader("Left over from each paycheck")
-    st.caption(f"{negs} paycheck{'s' if negs != 1 else ''} can't cover their own bills and lean on the check before."
-               if negs else "Every paycheck covers its own bills.")
+    st.subheader("Money carried to the next check")
     chart = (
         alt.Chart(chart_df)
         .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
         .encode(
             x=alt.X("Label:N", sort=chart_df["Label"].tolist(), title=None, axis=alt.Axis(labelAngle=-45)),
-            y=alt.Y("Left over:Q", title=None, axis=alt.Axis(format="$,.0f")),
-            color=alt.Color("Status:N", scale=alt.Scale(domain=["Covered", "Short"], range=["#2a78d6", "#d03b30"]),
+            y=alt.Y("Carried to next check:Q", title=None, axis=alt.Axis(format="$,.0f")),
+            color=alt.Color("Status:N", scale=alt.Scale(domain=["OK", "Short"], range=["#2a78d6", "#d03b30"]),
                             legend=None),
-            tooltip=["Payday", alt.Tooltip("Bills:Q", format="$,.2f"), alt.Tooltip("Left over:Q", format="$,.2f"),
-                     alt.Tooltip("Running total:Q", format="$,.2f")],
+            tooltip=["Payday", "Pays bills due", alt.Tooltip("Bills:Q", format="$,.2f"),
+                     alt.Tooltip("This check's leftover:Q", format="$,.2f"),
+                     alt.Tooltip("Carried to next check:Q", format="$,.2f")],
         )
-        .properties(height=260)
+        .properties(height=240)
     )
     st.altair_chart(chart, use_container_width=True)
 
-tab_sched, tab_bills, tab_pay, tab_how = st.tabs(["Pay schedule", "Bills", "Paychecks", "How your sheet decided"])
+tab_sched, tab_bills, tab_pay, tab_how = st.tabs(["Pay schedule", "Bills", "Paychecks", "How it works"])
 
 # ---------------------------------------------------------------- pay schedule
 
-AUTOMATIC = "Automatic"
-pay_labels = {long_date(p.date): p.date for p in plan}
-pay_options = [AUTOMATIC] + list(pay_labels)
 open_periods: set = st.session_state.setdefault("open_periods", set())
 
 
@@ -291,13 +277,6 @@ def apply_schedule_edits(ekey: str, bills: list[engine.BillPayment], period: dat
                 state["amounts"].pop(b.key, None)          # back to the bill's usual amount
             else:
                 state["amounts"][b.key] = round(float(amt), 2)
-        if "Pay from" in change:
-            choice = change["Pay from"]
-            if choice in (None, AUTOMATIC):
-                state["overrides"].pop(b.key, None)
-            elif choice in pay_labels:
-                state["overrides"][b.key] = pay_labels[choice].isoformat()
-                open_periods.add(pay_labels[choice])
     open_periods.add(period)  # keep this paycheck open after the page refreshes
     commit()
 
@@ -311,72 +290,77 @@ def note(b: engine.BillPayment) -> str:
 
 
 with tab_sched:
-    st.caption("Through Jun 25, 2027 each paycheck pays exactly the bills in your spreadsheet's C29:C50 formula. "
-               "After that the same pattern continues: each check picks up at the next bill row and pays everything "
-               "due before the next payday. **Tick Paid** and **type a new Amount** right in the table. Both save "
-               "immediately, and an amount you change here applies to that one payment only. To change a bill for "
-               "every month, use the Bills tab. To pay a bill from a different paycheck, change **Pay from** "
-               "(Automatic undoes it).")
-    upcoming = [p.date for p in shown if p.date >= today][:1]
+    st.caption("Each paycheck pays only the bills due from its payday up to the day before the next payday. "
+               "Bills due later wait for the check they fall under, and leftover money carries forward. "
+               "**Tick Paid** as you pay, and **type over an Amount** to change that one payment. Both save "
+               "immediately. To change a bill for every month, use the Bills tab.")
     for p in shown:
+        nxt = next_of.get(p.date)
         paid_n = sum(1 for b in p.bills if state["paid"].get(b.key))
-        left = f":red[Left over {money(p.left)}]" if p.left < 0 else f":green[Left over {money(p.left)}]"
-        tag = " · **This paycheck**" if p.date == cur_day else ""
-        label = (f"**{long_date(p.date)}**{tag} · Bills {money(p.bills_total)} · {left} · "
-                 f"Running {money(p.running)} · {paid_n}/{len(p.bills)} paid")
-        with st.expander(label, expanded=(p.date == cur_day or p.date in upcoming or p.date in open_periods)):
-            incomes = " + ".join(f"{i['name']} {money(i['amount'])}" for i in p.incomes)
-            if p.keep:
-                incomes += f" − {money(p.keep)} set aside"
-            from_sheet = any(b.how == "sheet" for b in p.bills)
-            st.caption(f"{incomes}  ·  Excel: `{engine.excel_formula(p)}`"
-                       + ("  (from your sheet)" if from_sheet else "  (pattern continued)"))
+        carry = (f":red[Carry to next {money(p.carried_out)}]" if p.carried_out < 0
+                 else f":green[Carry to next {money(p.carried_out)}]")
+        tag = " · **Current**" if p.date == cur_day else ""
+        label = (f"**{long_date(p.date)}**{tag} · pays bills due {md(p.date)}–{md(p.window_end)} · "
+                 f"Bills {money(p.bills_total)} · {carry} · {paid_n}/{len(p.bills)} paid")
+        with st.expander(label, expanded=(p.date == cur_day or p.date in open_periods)):
+            nd = f"the {short_date(nxt.date)} check" if nxt else "the next check"
+            st.markdown(f"**Pays the bills due {short_date(p.date)} through {short_date(p.window_end)}.** "
+                        f"Anything due on or after {md(p.window_end + timedelta(days=1))} waits for {nd}.")
             for orig, reason in p.moved_from:
                 st.info(f"Deposit moved earlier: {orig:%b} {orig.day} is {reason}.")
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Carried in", money(p.carried_in))
+            m2.metric("+ Paycheck", money(p.income - p.keep),
+                      " + ".join(f"{i['name']} {money(i['amount'], False)}" for i in p.incomes), delta_color="off")
+            m3.metric("− Bills due", money(p.bills_total))
+            m4.metric("= Carry to next check", money(p.carried_out))
+
             if p.bills:
                 df = pd.DataFrame({
                     "Paid": [bool(state["paid"].get(b.key)) for b in p.bills],
                     "Bill": [b.name for b in p.bills],
-                    "Row": [b.row for b in p.bills],
                     "Due": [short_date(b.due) for b in p.bills],
-                    "Timing": [timing(b, p.date) for b in p.bills],
+                    "When": [days_after(b, p.date) for b in p.bills],
                     "Amount": [b.amount for b in p.bills],
                     "Note": [note(b) for b in p.bills],
-                    "Pay from": [long_date(p.date) if b.how == "manual" else AUTOMATIC for b in p.bills],
                 })
                 ekey = f"sched_{p.date.isoformat()}_{st.session_state.rev}"
                 st.data_editor(
                     df, key=ekey, hide_index=True, use_container_width=True,
-                    disabled=["Bill", "Row", "Due", "Timing", "Note"],
+                    disabled=["Bill", "Due", "When", "Note"],
                     on_change=apply_schedule_edits, args=(ekey, p.bills, p.date),
                     column_config={
                         "Paid": st.column_config.CheckboxColumn(width="small"),
-                        "Row": st.column_config.NumberColumn(width="small", help="The bill's row in your spreadsheet"),
                         "Amount": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="$%.2f",
                                                                 help="Change this payment only"),
-                        "Pay from": st.column_config.SelectboxColumn(options=pay_options, required=True, width="medium"),
                     },
                 )
             else:
-                st.caption("No bills from this paycheck.")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Paycheck", money(p.income - p.keep))
-            m2.metric("Bills", money(p.bills_total))
-            m3.metric("Left over", money(p.left))
-            m4.metric("Running total", money(p.running))
+                st.caption("No bills come due before the next check.")
+
+            if p.carried_out < 0:
+                st.warning(f"Short by {money(-p.carried_out)}: these bills cost more than this paycheck plus "
+                           "what was carried in.")
+            elif p.left < 0:
+                st.caption(f"This paycheck alone is {money(-p.left)} short. The {money(p.carried_in)} carried in "
+                           "from earlier checks covers it.")
+
+            if nxt and nxt.bills:
+                waiting = ", ".join(f"{b.name} ({md(b.due)})" for b in nxt.bills if b.amount > 0)
+                st.caption(f"**Saved for the {short_date(nxt.date)} check:** {money(nxt.bills_total)} due "
+                           f"{md(nxt.date)}–{md(nxt.window_end)}: {waiting}")
 
 # ---------------------------------------------------------------- bills editor
 
 with tab_bills:
     st.caption("Edit names, due days and amounts here to change a bill for **every month** (payments where you typed "
                "a one-time amount on the Pay schedule keep that amount). Changes save as soon as you leave the cell. "
-               "Add rows at the bottom, or select rows and delete them. Keep the bills in due-day order so the "
-               "row numbers match your spreadsheet. **Late OK** lets a bill wait for the first paycheck after its "
-               "due date, up to that many days.")
+               "Add rows at the bottom, or select rows and delete them.")
     bills_df = pd.DataFrame([{
         "id": b["id"], "Bill": b["name"], "Due day": int(b["day"]), "Amount": float(b["amount"]),
-        "Late OK (days)": int(b.get("grace") or 0), "Include": b.get("active", True) is not False,
-    } for b in state["bills"]], columns=["id", "Bill", "Due day", "Amount", "Late OK (days)", "Include"])
+        "Include": b.get("active", True) is not False,
+    } for b in state["bills"]], columns=["id", "Bill", "Due day", "Amount", "Include"])
     edited = st.data_editor(
         bills_df, key=f"bills_{st.session_state.rev}", num_rows="dynamic", hide_index=True, use_container_width=True,
         column_config={
@@ -384,7 +368,6 @@ with tab_bills:
             "Bill": st.column_config.TextColumn(required=True),
             "Due day": st.column_config.NumberColumn(min_value=1, max_value=31, step=1, required=True),
             "Amount": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="$%.2f"),
-            "Late OK (days)": st.column_config.NumberColumn(min_value=0, max_value=20, step=1),
             "Include": st.column_config.CheckboxColumn(),
         },
     )
@@ -397,7 +380,6 @@ with tab_bills:
             "name": r["Bill"].strip(),
             "day": int(r["Due day"]) if pd.notna(r["Due day"]) else 1,
             "amount": float(r["Amount"]) if pd.notna(r["Amount"]) else 0.0,
-            "grace": int(r["Late OK (days)"]) if pd.notna(r["Late OK (days)"]) else 0,
             "active": bool(r["Include"]) if pd.notna(r["Include"]) else True,
         })
     if new_bills != state["bills"]:
@@ -460,37 +442,24 @@ with tab_pay:
 
 with tab_how:
     st.markdown("""
-### How this app decides which paycheck pays which bill
-**Through Jun 25, 2027 it uses your spreadsheet's own formulas.** Each payday in C29:C50 subtracts a block of bill
-rows, for example `=$H$34-SUM(C26:C27,C2:C13)` on Dec 25. The app pays exactly those rows from that paycheck,
-so every number matches your sheet. (The one difference is Sep 4: the sheet used $1,505 for the second paycheck
-that day and $1,501 after, and the app uses $1,501, so Sep 4 shows $4 less.)
+### The rule
+**A paycheck pays only the bills that come due from its payday up to the day before the next payday.**
+Bills due later are saved for the check they fall under. For example, the Nov 27 check pays everything due
+Nov 27 through Dec 10, including the Dec 1 mortgage. The Pontoon payment due Dec 15 waits for the Dec 11 check.
 
-**After Jun 25, 2027 the same pattern continues.** Your formulas work through the bill list in order: each
-paycheck starts at the row after the last one the previous check paid, and wraps from row 27 back to row 2 at
-the end of the month. Where your sheet ends, the app keeps going: each check picks up at the next row and pays
-every bill due before the following payday, so nothing is paid late. Each paycheck shows its formula in the
-same Excel form (`Excel: =Net-SUM(...)`), so you can compare it with your sheet.
+**Leftover money carries forward.** Each check starts with what the earlier checks didn't spend
+("Carried in"), adds the paycheck, and pays its bills. What's left is carried to the next check.
 
-### Why the totals swing so much
-Paydays are every 14 days but bills are monthly. The check that covers the 1st carries the mortgage and the
-other early-month bills (about $3,880 through the 8th), leaving about $67, or less than zero. The other check
-carries the 15th–28th bills and keeps $2,100–$3,100. A negative check is covered by the surplus from the check
-before it, which is why the app shows a running total.
+### Why some checks come up short
+Paydays are every 14 days but bills are monthly. The check that covers the 1st of the month carries the mortgage
+and the other early-month bills (about $3,880 through the 8th, plus Hyundai on the 28th when it falls in that
+window), so that check alone is a few hundred dollars short. The check before it has $2,100–$3,100 left, and that
+money carries over and covers it. The chart shows whether the money carried forward ever drops below zero.
 
-### What your formulas do that a plain "pay before it's due" rule wouldn't
-- **Sep 4** pays September's mortgage (due Sep 1) 3 days late, because the sheet starts after Sep 1.
-- **Oct 2** pays the Oct 1 bills (Church, Julian, Cove, Mortgage) one day late instead of from Sep 18.
-- **Nov 13, May 14 and Jun 11** pay Hyundai (and NBA in June) early, so the next check, which also carries
-  the mortgage, doesn't go negative. Dec, Jan, Feb and Mar don't do this, so those checks go negative.
-
-To change any of this, use **Pay from** on a bill in the Pay schedule. Updating the spreadsheet and importing it
-from the sidebar also works: the app reads the new formulas.
-
-### Things worth fixing in the sheet
+### Notes on the spreadsheet
 - Ten bills are $0 (Raymond, Express, both CareCredit accounts, Crossroads School, both Misc., Farm Bureau
-  Life, NBA League Pass). If any are real, the leftovers are too high. Type the amounts in the app.
-- The summary stops at Jun 25, 2027 even though paydays run to Aug 20, 2027. The app continues it.
-- The "Order" tab is left over from a debt-payoff template and shows only #REF! errors.
+  Life, NBA League Pass). If any are real, type the amounts on the Bills tab.
+- The second paycheck was $1,505 on Sep 4 and $1,501 after that. The app uses $1,501.
 """)
+
 

@@ -17,60 +17,20 @@ _BILLS = [
     ("NBA League Pass", 26, 0), ("Hyundai", 28, 340),
 ]
 
-# The summary formulas in C29:C50 of Finances.xlsx: payday -> bill rows it pays.
-_SHEET_FORMULAS = [
-    ("2026-09-04", "=$H$10-SUM(C11:C18,C6)"), ("2026-09-18", "=$H$13-SUM(C19:C27)"),
-    ("2026-10-02", "=$H$16-SUM(C2:C18)"), ("2026-10-16", "=$H$19-SUM(C19:C27)"),
-    ("2026-10-30", "=$H$22-SUM(C2:C14)"), ("2026-11-13", "=$H$25-SUM(C15:C27)"),
-    ("2026-11-27", "=$H$28-SUM(C2:C14)"), ("2026-12-11", "=$H$31-SUM(C15:C25)"),
-    ("2026-12-25", "=$H$34-SUM(C26:C27,C2:C13)"), ("2027-01-08", "=$H$37-SUM(C14:C23)"),
-    ("2027-01-22", "=$H$40-SUM(C24:C27,C2:C11)"), ("2027-02-05", "=$H$43-SUM(C12:C18)"),
-    ("2027-02-19", "=$H$46-SUM(C19:C27,C2:C11)"), ("2027-03-05", "=$H$49-SUM(C12:C18)"),
-    ("2027-03-19", "=$H$52-SUM(C19:C27,C2:C8)"), ("2027-04-02", "=$H$55-SUM(C9:C18)"),
-    ("2027-04-16", "=$H$58-SUM(C19:C27)"), ("2027-04-30", "=$H$61-SUM(C2:C14)"),
-    ("2027-05-14", "=$H$64-SUM(C15:C27)"), ("2027-05-28", "=$H$67-SUM(C2:C14)"),
-    ("2027-06-11", "=$H$70-SUM(C15:C27)"), ("2027-06-25", "=$H$73-SUM(C2:C14)"),
-]
-
-
-def formula_rows(formula: str) -> list[int]:
-    """Rows of column C summed in a formula like =$H$34-SUM(C26:C27,C2:C13)."""
-    import re
-
-    rows: list[int] = []
-    for a, b in re.findall(r"\$?C\$?(\d+)(?::\$?C\$?(\d+))?", formula.split("SUM", 1)[-1], flags=re.I):
-        lo, hi = int(a), int(b or a)
-        rows.extend(range(min(lo, hi), max(lo, hi) + 1))
-    return rows
-
-
-def sheet_plan_from(formulas, row_to_id: dict[int, str]) -> list[dict]:
-    return [{"date": d, "formula": f, "bills": [row_to_id[r] for r in formula_rows(f) if r in row_to_id]}
-            for d, f in formulas]
-
-
 DEFAULT_STATE = {
-    "version": 2,
+    "version": 3,
     "incomes": [
         {"id": "i1", "name": "Paycheck 1", "amount": 2445.0, "keep": 0.0, "first_date": "2026-09-04", "frequency": "biweekly"},
         {"id": "i2", "name": "Paycheck 2", "amount": 1501.0, "keep": 0.0, "first_date": "2026-09-04", "frequency": "biweekly"},
     ],
     "bills": [
-        {"id": f"b{i + 1}", "name": n, "day": d, "amount": float(a), "grace": 0, "active": True}
+        {"id": f"b{i + 1}", "name": n, "day": d, "amount": float(a), "active": True}
         for i, (n, d, a) in enumerate(_BILLS)
     ],
-    "settings": {"months": 12, "start_balance": 0.0, "auto_balance": False, "cushion": 0.0,
-                 "holiday_shift": False, "show_past": False},
-    "sheet_plan": sheet_plan_from(_SHEET_FORMULAS, {i + 2: f"b{i + 1}" for i in range(len(_BILLS))}),
-    "overrides": {},   # bill payments you moved to another paycheck: "<bill id>|<due date>" -> payday
+    "settings": {"months": 12, "start_balance": 0.0, "holiday_shift": False, "show_past": False},
     "amounts": {},     # amount changed for one payment only: "<bill id>|<due date>" -> amount
     "paid": {},        # "<bill id>|<due date>" -> True
 }
-
-# Moves the first version of the app added to copy the spreadsheet; the formulas now cover them.
-_OLD_SEEDED_MOVES = {"b26|2026-11-28": "2026-11-13", "b26|2027-05-28": "2027-05-14",
-                     "b25|2027-06-26": "2027-06-11", "b26|2027-06-28": "2027-06-11"}
-
 
 def default_state() -> dict:
     return copy.deepcopy(DEFAULT_STATE)
@@ -81,18 +41,18 @@ def normalize(s: dict) -> dict:
     s.setdefault("incomes", [])
     s.setdefault("bills", [])
     s["settings"] = {**d["settings"], **s.get("settings", {})}
-    s.setdefault("overrides", {})
     s.setdefault("amounts", {})
     s.setdefault("paid", {})
-    if int(s.get("version", 1)) < 2:
-        # upgrade from the first version: follow the sheet's formulas, keep the sheet's paydays
-        s["sheet_plan"] = d["sheet_plan"]
-        for k, v in _OLD_SEEDED_MOVES.items():
-            if s["overrides"].get(k) == v:
-                del s["overrides"][k]
+    if int(s.get("version", 1)) < 3:
+        # Older versions used the spreadsheet's formulas and hand moves. The app now follows one rule
+        # (each check pays only the bills due before the next payday), so those are dropped.
+        # Paid ticks and changed amounts are kept.
+        for k in ("sheet_plan", "overrides"):
+            s.pop(k, None)
+        for k in ("auto_balance", "cushion"):
+            s["settings"].pop(k, None)
         s["settings"]["holiday_shift"] = False
-        s["version"] = 2
-    s.setdefault("sheet_plan", [])
+        s["version"] = 3
     return s
 
 
@@ -222,8 +182,7 @@ def import_workbook(file) -> dict:
 
     wb = openpyxl.load_workbook(file, data_only=True)
     ws = wb["Finances"] if "Finances" in wb.sheetnames else wb.worksheets[0]
-    bills, row_to_id = [], {}
-    last_bill_row = 1
+    bills = []
     for r in range(2, ws.max_row + 1):
         day, name, amt = ws.cell(r, 1).value, ws.cell(r, 2).value, ws.cell(r, 3).value
         if not isinstance(day, (int, float)) or not isinstance(name, str):
@@ -231,10 +190,8 @@ def import_workbook(file) -> dict:
                 break
             continue
         bid = f"b{len(bills) + 1}"
-        row_to_id[r] = bid
-        last_bill_row = r
         bills.append({"id": bid, "name": name.strip(), "day": int(day),
-                      "amount": float(amt or 0), "grace": 0, "active": True})
+                      "amount": float(amt or 0), "active": True})
     if not bills:
         raise ValueError("No bills found. Expected due day in column A, name in B and amount in C.")
 
@@ -253,20 +210,7 @@ def import_workbook(file) -> dict:
         if num(f) > 0:
             incomes.append({"id": f"i{i}", "name": f"Paycheck {i}", "amount": num(f), "keep": num(g),
                             "first_date": first.isoformat(), "frequency": "biweekly"})
-    # Summary block: a payday in column B and a formula like =$H$34-SUM(C26:C27,C2:C13) in column C.
-    if hasattr(file, "seek"):
-        file.seek(0)
-    wf = openpyxl.load_workbook(file, data_only=False)
-    wsf = wf[ws.title]
-    formulas = []
-    for r in range(last_bill_row + 1, ws.max_row + 1):
-        f, d = wsf.cell(r, 3).value, ws.cell(r, 2).value
-        if isinstance(f, str) and "SUM(" in f.upper() and isinstance(d, (datetime, date)):
-            d = d.date() if isinstance(d, datetime) else d
-            formulas.append((d.isoformat(), f))
-
     state = default_state()
     state["bills"], state["incomes"] = bills, incomes or state["incomes"]
-    state["sheet_plan"] = sheet_plan_from(formulas, row_to_id)
-    state["overrides"], state["amounts"], state["paid"] = {}, {}, {}
+    state["amounts"], state["paid"] = {}, {}
     return state
