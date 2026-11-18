@@ -209,5 +209,7 @@
   "show_past": false
  },
  "amounts": {},
- "paid": {}
+ "paid": {
+  "b14|2026-11-15": true
+ }
 }
