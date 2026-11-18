@@ -150,7 +150,7 @@
    "name": "Crossroads School",
    "day": 20,
    "amount": 0.0,
-   "active": true
+   "active": false
   },
   {
    "id": "b20",
